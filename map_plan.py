@@ -64,7 +64,7 @@ def move_soft_position(soft_position, dx, dy, size=(20,20), beta=1.):
     x, y = get_hard_position(soft_position)
     # get the new hard coordinate
     x += dx
-    y += dy    
+    y += dy
     # get the new soft position
     new_soft_position = get_soft_position(x, y, size=size, beta=beta)
 
@@ -86,3 +86,34 @@ def plot_soft_position(soft_position: torch.Tensor, ax=None, cmap=None, alpha=1.
     ax.grid(which='minor', color='w', linestyle='-', linewidth=2)
     
     return ax
+
+# compute the score of the trajectory.
+# the score consists of the following sub-scores:
+#   1. the distance from the final point in the trajectory to the goal point
+#   2. the collision score of the each point in the trajectory
+#   3. the smoothness of the trajectory
+#   4. the distance from the second point in the trajectory to the current position
+def score_trajectory(trajectory: torch.Tensor, 
+                     obstacle_map: torch.Tensor, 
+                     goal_map: torch.Tensor, 
+                     current_pos_map: torch.Tensor,
+                     distance_coeff: float = 5.0,
+                     collision_coeff: float = 50.0,
+                     smoothness_coeff: float = 10.0,
+                     distance_from_current_coeff: float = 10.0):
+    # the distance from the final point in the trajectory to the goal point
+    distance_score = torch.norm(trajectory[-1]-
+                                torch.tensor(get_hard_position(goal_map, argmax=True)))
+    # the collision score of the each point in the trajectory
+    collision_score = 0
+    for i in range(trajectory.shape[0]):
+        collision_score += get_collision_score(obstacle_map, get_soft_position(trajectory[i, 0], trajectory[i, 1]))
+    # the smoothness of the trajectory computes the norm of the difference between each pair of consecutive points
+    smoothness_score = torch.norm(trajectory[1:]-trajectory[:-1])
+    # the distance from the second point in the trajectory to the current position
+    distance_from_current_score = torch.norm(trajectory[1]-
+                                             torch.tensor(get_hard_position(current_pos_map, argmax=True)))
+    return (distance_coeff * distance_score + 
+            collision_coeff * collision_score + 
+            smoothness_coeff * smoothness_score + 
+            distance_from_current_coeff * distance_from_current_score)
