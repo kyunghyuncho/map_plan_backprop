@@ -54,9 +54,16 @@ def get_hard_position(soft_position, argmax=False):
 
     return x, y
 
+def obstacle_view(obstacle_map, soft_position, noise=0.0):
+    current_view = obstacle_map * soft_position
+    if noise > 0.:
+        current_view += noise * torch.rand_like(current_view)
+        current_view = torch.clamp(current_view, 0, 1)
+    return current_view
+
 def get_collision_score(obstacle_map, soft_position):
     # compute the weighted sum of the obstacle map using the soft_position
-    collision_score = (obstacle_map * soft_position).sum()
+    collision_score = obstacle_view(obstacle_map, soft_position).sum()
     return collision_score
 
 def move_soft_position(soft_position, dx, dy, size=(20,20), beta=1.):
@@ -161,3 +168,22 @@ def optimize_trajectory(obstacle_map: torch.Tensor,
         trajectory = trajectory.round()
 
     return trajectory
+
+
+# update the estimated obstacle map based on the new observation
+def update_obstacle_map(obstacle_map_logit: torch.Tensor, 
+                        current_pos_map: torch.Tensor, 
+                        observation: torch.Tensor, 
+                        optimizer = None,
+                        n_steps: int = 5,
+                        ):
+    for inner_step in range(n_steps):
+        # update the estimated obstacle map
+        optimizer.zero_grad()
+        loss = torch.abs(current_pos_map * 
+                         torch.sigmoid(obstacle_map_logit) - 
+                         observation).sum()
+        loss.backward()
+        optimizer.step()
+
+    return loss
