@@ -117,3 +117,47 @@ def score_trajectory(trajectory: torch.Tensor,
             collision_coeff * collision_score + 
             smoothness_coeff * smoothness_score + 
             distance_from_current_coeff * distance_from_current_score)
+
+
+# perform a gradient-based optimization to find the best trajectory
+def optimize_trajectory(obstacle_map: torch.Tensor, 
+                       goal_map: torch.Tensor, 
+                       current_pos_map: torch.Tensor,
+                       trajectory_length: int = 20, 
+                       num_iterations: int = 100,
+                       learning_rate: float = 0.01,
+                       distance_coeff: float = 5.0,
+                       collision_coeff: float = 50.0,
+                       smoothness_coeff: float = 10.0,
+                       distance_from_current_coeff: float = 10.0,
+                       rounding: bool = False,
+                       verbose: bool = False):
+    trajectory = torch.zeros(trajectory_length, 2)
+    trajectory[0] = torch.tensor(get_hard_position(current_pos_map, argmax=True))
+
+    # randomly initialize the rest of the steps of `trajectory`
+    for i in range(1, trajectory_length):
+        trajectory[i] = torch.tensor([np.random.randint(0, obstacle_map.shape[0]), 
+                                    np.random.randint(0, obstacle_map.shape[0])])
+    
+    trajectory.requires_grad = True
+    optimizer = torch.optim.Adam([trajectory], lr=learning_rate)
+    for i in range(num_iterations):
+        optimizer.zero_grad()
+        score = score_trajectory(trajectory, 
+                                 obstacle_map, 
+                                 goal_map, 
+                                 current_pos_map,
+                                 distance_coeff=distance_coeff,
+                                 collision_coeff=collision_coeff,
+                                 smoothness_coeff=smoothness_coeff,
+                                 distance_from_current_coeff=distance_from_current_coeff)
+        score.backward()
+        if verbose:
+            print(f'iteration {i+1}/{num_iterations}, score: {score.item()}')
+        optimizer.step()
+    
+    if rounding:
+        trajectory = trajectory.round()
+
+    return trajectory
