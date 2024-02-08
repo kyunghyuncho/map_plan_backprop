@@ -216,3 +216,15 @@ def update_obstacle_map(obstacle_map_logit: torch.Tensor,
         optimizer.step()
 
     return loss
+
+
+def take_random_step(current_pos, obstacle_map):
+    max_tol = 10
+    for ti in range(max_tol):
+        next_pos = (current_pos[0] + np.random.choice([-1, 0, 1]), 
+                    current_pos[1] + np.random.choice([-1, 0, 1]))
+        next_pos = (np.clip(next_pos[0], 0, obstacle_map.shape[0]-1), 
+                    np.clip(next_pos[1], 0, obstacle_map.shape[1]-1))
+        if obstacle_map[next_pos] == 0:
+            return next_pos
+    assert False, 'cannot find a valid next position'
