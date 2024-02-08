@@ -57,7 +57,7 @@ def get_hard_position(soft_position, argmax=False):
 def obstacle_view(obstacle_map, soft_position, noise=0.0):
     current_view = obstacle_map * soft_position
     if noise > 0.:
-        current_view += noise * torch.rand_like(current_view)
+        current_view += noise * torch.randn_like(current_view)
         current_view = torch.clamp(current_view, 0, 1)
     return current_view
 
@@ -76,6 +76,29 @@ def move_soft_position(soft_position, dx, dy, size=(20,20), beta=1.):
     new_soft_position = get_soft_position(x, y, size=size, beta=beta)
 
     return new_soft_position
+
+def move_position(x, y, dx, dy, obstacle_map):
+    x_, y_ = x, y
+    while True:
+        x_ += np.sign(dx)
+        y_ += np.sign(dy)
+
+        if x_ < 0 or x_ >= obstacle_map.shape[0] or y_ < 0 or y_ >= obstacle_map.shape[1]:
+            x_ -= np.sign(dx)
+            y_ -= np.sign(dy)
+            break
+
+        if obstacle_map[x_, y_] > 0:
+            x_ -= np.sign(dx)
+            y_ -= np.sign(dy)
+            break
+
+        dx -= np.sign(dx)
+        dy -= np.sign(dy)
+        if dx == 0 and dy == 0:
+            break
+
+    return x_, y_
 
 def plot_soft_position(soft_position: torch.Tensor, ax=None, cmap=None, alpha=1.0):
     if ax is None:
@@ -104,10 +127,10 @@ def score_trajectory(trajectory: torch.Tensor,
                      obstacle_map: torch.Tensor, 
                      goal_map: torch.Tensor, 
                      current_pos_map: torch.Tensor,
-                     distance_coeff: float = 5.0,
-                     collision_coeff: float = 50.0,
-                     smoothness_coeff: float = 10.0,
-                     distance_from_current_coeff: float = 10.0):
+                     distance_coeff: float = 1.0,
+                     collision_coeff: float = 1.0,
+                     smoothness_coeff: float = 1.0,
+                     distance_from_current_coeff: float = 1.0):
     # the distance from the final point in the trajectory to the goal point
     distance_score = torch.norm(trajectory[-1]-
                                 torch.tensor(get_hard_position(goal_map, argmax=True)))
@@ -116,9 +139,9 @@ def score_trajectory(trajectory: torch.Tensor,
     for i in range(trajectory.shape[0]):
         collision_score += get_collision_score(obstacle_map, get_soft_position(trajectory[i, 0], trajectory[i, 1]))
     # the smoothness of the trajectory computes the norm of the difference between each pair of consecutive points
-    smoothness_score = torch.norm(trajectory[1:]-trajectory[:-1])
+    smoothness_score = torch.norm(trajectory[1:]-trajectory[:-1]) / trajectory.shape[0]
     # the distance from the second point in the trajectory to the current position
-    distance_from_current_score = torch.norm(trajectory[1]-
+    distance_from_current_score = torch.norm(trajectory[0]-
                                              torch.tensor(get_hard_position(current_pos_map, argmax=True)))
     return (distance_coeff * distance_score + 
             collision_coeff * collision_score + 
@@ -132,20 +155,24 @@ def optimize_trajectory(obstacle_map: torch.Tensor,
                        current_pos_map: torch.Tensor,
                        trajectory_length: int = 20, 
                        num_iterations: int = 100,
-                       learning_rate: float = 0.01,
-                       distance_coeff: float = 5.0,
-                       collision_coeff: float = 50.0,
-                       smoothness_coeff: float = 10.0,
-                       distance_from_current_coeff: float = 10.0,
+                       learning_rate: float = 1.,
+                       distance_coeff: float = 1.0,
+                       collision_coeff: float = 1.0,
+                       smoothness_coeff: float = 1.0,
+                       distance_from_current_coeff: float = 1.0,
                        rounding: bool = False,
-                       verbose: bool = False):
-    trajectory = torch.zeros(trajectory_length, 2)
-    trajectory[0] = torch.tensor(get_hard_position(current_pos_map, argmax=True))
+                       verbose: bool = False,
+                       initial_trajectory = None):
+    if initial_trajectory is None:
+        trajectory = torch.zeros(trajectory_length, 2)
+        trajectory[0] = torch.tensor(get_hard_position(current_pos_map, argmax=True))
 
-    # randomly initialize the rest of the steps of `trajectory`
-    for i in range(1, trajectory_length):
-        trajectory[i] = torch.tensor([np.random.randint(0, obstacle_map.shape[0]), 
-                                    np.random.randint(0, obstacle_map.shape[0])])
+        # randomly initialize the rest of the steps of `trajectory`
+        for i in range(1, trajectory_length):
+            trajectory[i] = torch.tensor([np.random.randint(0, obstacle_map.shape[0]), 
+                                        np.random.randint(0, obstacle_map.shape[0])])
+    else:
+        trajectory = initial_trajectory
     
     trajectory.requires_grad = True
     optimizer = torch.optim.Adam([trajectory], lr=learning_rate)
@@ -176,6 +203,7 @@ def update_obstacle_map(obstacle_map_logit: torch.Tensor,
                         observation: torch.Tensor, 
                         optimizer = None,
                         n_steps: int = 5,
+                        decay: float = 0.
                         ):
     for inner_step in range(n_steps):
         # update the estimated obstacle map
@@ -183,6 +211,7 @@ def update_obstacle_map(obstacle_map_logit: torch.Tensor,
         loss = torch.abs(current_pos_map * 
                          torch.sigmoid(obstacle_map_logit) - 
                          observation).sum()
+        loss += decay * torch.abs(obstacle_map_logit.sum())
         loss.backward()
         optimizer.step()
 
